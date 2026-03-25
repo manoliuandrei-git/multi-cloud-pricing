@@ -4,7 +4,11 @@ Exposes REST endpoints consumed by the Next.js frontend.
 """
 from __future__ import annotations
 
+import base64
+import os
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
 # Make sure local modules are importable when run from any cwd
@@ -16,6 +20,48 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from config import config
+
+
+# ---------------------------------------------------------------------------
+# Oracle Wallet bootstrap
+# ---------------------------------------------------------------------------
+
+def _bootstrap_wallet() -> None:
+    """
+    If ATP_WALLET_B64 is set, decode it, write the zip to a temp directory,
+    extract it, and point ATP_WALLET_DIR / ATP_CONFIG_DIR at that directory.
+
+    This makes the wallet available in environments (Vercel, Docker, etc.)
+    where you can't mount a folder but can set environment variables.
+    """
+    b64 = os.environ.get("ATP_WALLET_B64", "").strip()
+    if not b64:
+        return  # fall back to ATP_WALLET_DIR path set in .env
+
+    # Create a persistent temp directory for this process
+    wallet_dir = Path(tempfile.mkdtemp(prefix="atpwallet_"))
+
+    # Decode and extract
+    zip_bytes = base64.b64decode(b64)
+    zip_path = wallet_dir / "wallet.zip"
+    zip_path.write_bytes(zip_bytes)
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(wallet_dir)
+
+    zip_path.unlink()  # remove the zip, keep only the extracted files
+
+    # Override the config so the Oracle driver finds the wallet
+    wallet_str = str(wallet_dir)
+    os.environ["ATP_WALLET_DIR"] = wallet_str
+    os.environ["ATP_CONFIG_DIR"] = wallet_str
+    config.ATP_WALLET_DIR = wallet_str
+    config.ATP_CONFIG_DIR = wallet_str
+
+    print(f"[wallet] Extracted ATP wallet to {wallet_dir}")
+
+
+_bootstrap_wallet()
 from agents.mapping_agent import map_services
 from agents.comparison_agent import compare_services
 from utils.pricing_refresh import refresh_pricing_now, pricing_manager
