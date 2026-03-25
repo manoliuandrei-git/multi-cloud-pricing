@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-aws:   #FF9900;
+  --color-azure: #0078D4;
+  --color-gcp:   #4285F4;
+  --color-oci:   #F80000;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900 antialiased;
+}
