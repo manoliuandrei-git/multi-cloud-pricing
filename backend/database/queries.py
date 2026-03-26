@@ -5,10 +5,28 @@ Provides reusable query functions for pricing cache, service mappings, and vecto
 import json
 import logging
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
 from database.connection import db
 
 logger = logging.getLogger(__name__)
+
+
+class _SafeEncoder(json.JSONEncoder):
+    """JSON encoder that handles Oracle-returned types (datetime, Decimal, bytes)."""
+    def default(self, obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, bytes):
+            return obj.decode("utf-8", errors="replace")
+        return super().default(obj)
+
+
+def _dumps(obj) -> str:
+    """json.dumps with Oracle-safe encoder."""
+    return _dumps(obj, cls=_SafeEncoder)
 
 
 # ============================================
@@ -55,9 +73,9 @@ def insert_pricing_data(pricing_data: Dict) -> int:
 
     # Sanitise before binding
     if isinstance(pricing_data.get('specifications'), (dict, list)):
-        pricing_data['specifications'] = json.dumps(pricing_data['specifications'])
+        pricing_data['specifications'] = _dumps(pricing_data['specifications'])
     if isinstance(pricing_data.get('features'), (dict, list)):
-        pricing_data['features'] = json.dumps(pricing_data['features'])
+        pricing_data['features'] = _dumps(pricing_data['features'])
     if pricing_data.get('price_per_hour') is None:
         pricing_data['price_per_hour'] = 0.0
     if pricing_data.get('price_per_month') is None:
@@ -113,9 +131,9 @@ def bulk_insert_pricing_data(pricing_list: List[Dict]) -> int:
     for item in pricing_list:
         row = {k: v for k, v in item.items() if k in _ALLOWED}
         if isinstance(row.get('specifications'), (dict, list)):
-            row['specifications'] = json.dumps(row['specifications'])
+            row['specifications'] = _dumps(row['specifications'])
         if isinstance(row.get('features'), (dict, list)):
-            row['features'] = json.dumps(row['features'])
+            row['features'] = _dumps(row['features'])
         if row.get('price_per_hour') is None:
             row['price_per_hour'] = 0.0
         if row.get('price_per_month') is None:
@@ -427,7 +445,7 @@ def insert_document(doc_name: str, doc_source: str, content: str, doc_type: str 
         ) RETURNING id INTO :id
     """
 
-    metadata = json.dumps({
+    metadata = _dumps({
         'uploaded_at': datetime.now().isoformat(),
         'doc_type': doc_type
     })
@@ -481,7 +499,7 @@ def insert_chunks_with_embeddings(doc_id: int, chunks: List[Tuple[int, str, str]
         ) t
     """
 
-    chunks_json = json.dumps([
+    chunks_json = _dumps([
         {
             'chunk_id': chunk_id,
             'chunk_text': text[:4000],  # Limit for VARCHAR2
@@ -590,9 +608,9 @@ def log_agent_execution(
         cursor.execute(query, {
             'agent_name': agent_name,
             'agent_type': agent_type,
-            'input_data': json.dumps(input_data),
-            'output_data': json.dumps(output_data),
-            'context': json.dumps(context),
+            'input_data': _dumps(input_data),
+            'output_data': _dumps(output_data),
+            'context': _dumps(context),
             'decision_reasoning': decision_reasoning,
             'execution_time_ms': execution_time_ms,
             'status': status,
