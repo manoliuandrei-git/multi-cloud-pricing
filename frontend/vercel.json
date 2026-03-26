@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://your-fastapi-backend.com/api/:path*"
+      "destination": "https://amused-radiance-production-3799.up.railway.app/api/:path*"
     }
   ]
 }
