@@ -26,7 +26,7 @@ class _SafeEncoder(json.JSONEncoder):
 
 def _dumps(obj) -> str:
     """json.dumps with Oracle-safe encoder."""
-    return _dumps(obj, cls=_SafeEncoder)
+    return json.dumps(obj, cls=_SafeEncoder)
 
 
 # ============================================
