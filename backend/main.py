@@ -267,43 +267,80 @@ def health():
 @app.get("/api/debug")
 def debug():
     """
-    Diagnostic endpoint — reports wallet state, DB connectivity, and row counts.
-    Remove or protect this endpoint before going to production.
+    Diagnostic endpoint — two-phase: fast env check, then timed DB test (10 s).
+    Remove or protect before going to production.
     """
     import os
+    import concurrent.futures
     from database.connection import db
 
     result: dict = {}
 
-    # 1. Wallet / env-var state
-    result["wallet_dir"] = os.environ.get("ATP_WALLET_DIR", "NOT SET")
-    result["wallet_dir_exists"] = os.path.isdir(result["wallet_dir"]) if result["wallet_dir"] != "NOT SET" else False
+    # ── Phase 1: env / wallet state (always fast) ──────────────────────────
+    wallet_dir = os.environ.get("ATP_WALLET_DIR", "NOT SET")
+    result["wallet_dir"] = wallet_dir
+    result["wallet_dir_exists"] = os.path.isdir(wallet_dir) if wallet_dir != "NOT SET" else False
     result["atp_service"] = config.ATP_SERVICE or "NOT SET"
     result["atp_username"] = config.ATP_USERNAME or "NOT SET"
     result["atp_password_set"] = bool(config.ATP_PASSWORD)
     result["anthropic_key_set"] = bool(config.ANTHROPIC_API_KEY)
 
-    # List wallet files so we can verify what was extracted
+    # Check each expected wallet chunk env var
+    wallet_chunks_found = []
+    for i in range(1, 20):
+        v = os.environ.get(f"ATP_WALLET_B64_{i}", "")
+        if v:
+            wallet_chunks_found.append(f"ATP_WALLET_B64_{i} ({len(v)} chars)")
+        else:
+            break
+    result["wallet_chunks"] = wallet_chunks_found or (
+        ["ATP_WALLET_B64 set"] if os.environ.get("ATP_WALLET_B64") else ["NONE FOUND"]
+    )
+
     if result["wallet_dir_exists"]:
         try:
-            result["wallet_files"] = os.listdir(result["wallet_dir"])
+            result["wallet_files"] = sorted(os.listdir(wallet_dir))
         except Exception as e:
             result["wallet_files"] = f"ERROR: {e}"
 
-    # 2. DB connection test
-    try:
-        ok = db.test_connection()
-        result["db_connection"] = "OK" if ok else "FAILED"
-    except Exception as e:
-        result["db_connection"] = f"EXCEPTION: {e}"
+    # ── Phase 2: DB connection — 10 s timeout so we never hang ────────────
+    def _test_db():
+        try:
+            import oracledb
+            # Use explicit connect with short timeout
+            conn = oracledb.connect(
+                user=config.ATP_USERNAME,
+                password=config.ATP_PASSWORD,
+                dsn=config.ATP_SERVICE,
+                config_dir=config.ATP_CONFIG_DIR,
+                wallet_location=config.ATP_WALLET_DIR,
+                wallet_password=config.ATP_PASSWORD,
+                tcp_connect_timeout=8,
+            )
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM DUAL")
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+            return {"ok": True, "dual": str(row)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
-    # 3. Row counts per category (only if connected)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_test_db)
+        try:
+            db_result = future.result(timeout=12)
+            result["db_connection"] = "OK" if db_result["ok"] else f"FAILED: {db_result.get('error')}"
+        except concurrent.futures.TimeoutError:
+            result["db_connection"] = "TIMEOUT after 12 s — Railway cannot reach Oracle ATP endpoint"
+
+    # ── Phase 3: row counts (only if connected) ────────────────────────────
     if result["db_connection"] == "OK":
         try:
             rows = db.execute_query(
                 "SELECT service_category, COUNT(*) FROM pricing_cache GROUP BY service_category"
             )
-            result["pricing_cache_counts"] = {r[0]: r[1] for r in rows}
+            result["pricing_cache_counts"] = {str(r[0]): int(r[1]) for r in rows}
         except Exception as e:
             result["pricing_cache_counts"] = f"ERROR: {e}"
 
@@ -311,7 +348,7 @@ def debug():
             rows = db.execute_query(
                 "SELECT DISTINCT service_category FROM pricing_cache"
             )
-            result["distinct_categories"] = [r[0] for r in rows]
+            result["distinct_categories"] = [str(r[0]) for r in rows]
         except Exception as e:
             result["distinct_categories"] = f"ERROR: {e}"
 
