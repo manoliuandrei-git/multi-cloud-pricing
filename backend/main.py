@@ -264,6 +264,68 @@ def health():
     return {"status": "ok", "version": "2.0.0"}
 
 
+@app.get("/api/db-test")
+def db_test():
+    """
+    Minimal DB connectivity probe — returns the raw exception so we can
+    diagnose connection failures without any wrapper logic.
+    """
+    import os, traceback
+    import oracledb
+
+    info = {
+        "wallet_dir": config.ATP_WALLET_DIR,
+        "config_dir": config.ATP_CONFIG_DIR,
+        "service": config.ATP_SERVICE,
+        "user": config.ATP_USERNAME,
+        "password_set": bool(config.ATP_PASSWORD),
+        "wallet_dir_exists": os.path.isdir(config.ATP_WALLET_DIR or ""),
+    }
+
+    if info["wallet_dir_exists"]:
+        info["wallet_files"] = sorted(os.listdir(config.ATP_WALLET_DIR))
+
+        sqlnet_path = os.path.join(config.ATP_WALLET_DIR, "sqlnet.ora")
+        if os.path.exists(sqlnet_path):
+            info["sqlnet_ora"] = open(sqlnet_path).read()
+
+        tns_path = os.path.join(config.ATP_WALLET_DIR, "tnsnames.ora")
+        if os.path.exists(tns_path):
+            info["tnsnames_ora"] = open(tns_path).read()[:1000]
+
+    # Attempt 1: with wallet_password = ATP_PASSWORD
+    try:
+        conn = oracledb.connect(
+            user=config.ATP_USERNAME,
+            password=config.ATP_PASSWORD,
+            dsn=config.ATP_SERVICE,
+            config_dir=config.ATP_CONFIG_DIR,
+            wallet_location=config.ATP_WALLET_DIR,
+            wallet_password=config.ATP_PASSWORD,
+        )
+        conn.close()
+        info["attempt1"] = "SUCCESS"
+    except Exception as e:
+        info["attempt1"] = f"FAILED: {e}"
+        info["attempt1_trace"] = traceback.format_exc()
+
+    # Attempt 2: without wallet_password (uses ewallet.pem directly)
+    try:
+        conn = oracledb.connect(
+            user=config.ATP_USERNAME,
+            password=config.ATP_PASSWORD,
+            dsn=config.ATP_SERVICE,
+            config_dir=config.ATP_CONFIG_DIR,
+            wallet_location=config.ATP_WALLET_DIR,
+        )
+        conn.close()
+        info["attempt2"] = "SUCCESS"
+    except Exception as e:
+        info["attempt2"] = f"FAILED: {e}"
+
+    return info
+
+
 @app.get("/api/debug")
 def debug():
     """
