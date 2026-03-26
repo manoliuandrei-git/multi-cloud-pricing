@@ -31,10 +31,26 @@ def _bootstrap_wallet() -> None:
     If ATP_WALLET_B64 is set, decode it, write the zip to a temp directory,
     extract it, and point ATP_WALLET_DIR / ATP_CONFIG_DIR at that directory.
 
-    This makes the wallet available in environments (Vercel, Docker, etc.)
-    where you can't mount a folder but can set environment variables.
+    Also supports chunked vars ATP_WALLET_B64_1, ATP_WALLET_B64_2, … for
+    environments (e.g. Railway) where a single variable is capped at 32 KB.
     """
+    # 1. Try single variable first
     b64 = os.environ.get("ATP_WALLET_B64", "").strip()
+
+    # 2. Fall back to chunked variables ATP_WALLET_B64_1, _2, _3 …
+    if not b64:
+        chunks = []
+        i = 1
+        while True:
+            chunk = os.environ.get(f"ATP_WALLET_B64_{i}", "").strip()
+            if not chunk:
+                break
+            chunks.append(chunk)
+            i += 1
+        if chunks:
+            b64 = "".join(chunks)
+            print(f"[wallet] Assembled ATP wallet from {len(chunks)} chunk(s)")
+
     if not b64:
         return  # fall back to ATP_WALLET_DIR path set in .env
 
@@ -57,6 +73,21 @@ def _bootstrap_wallet() -> None:
     os.environ["ATP_CONFIG_DIR"] = wallet_str
     config.ATP_WALLET_DIR = wallet_str
     config.ATP_CONFIG_DIR = wallet_str
+
+    # Fix sqlnet.ora — the wallet was downloaded on a different machine so the
+    # DIRECTORY path inside sqlnet.ora points to a non-existent local path.
+    # Rewrite it to point to our runtime temp directory.
+    sqlnet_path = wallet_dir / "sqlnet.ora"
+    if sqlnet_path.exists():
+        import re
+        content = sqlnet_path.read_text()
+        content = re.sub(
+            r'DIRECTORY\s*=\s*"[^"]*"',
+            f'DIRECTORY = "{wallet_str}"',
+            content,
+        )
+        sqlnet_path.write_text(content)
+        print(f"[wallet] Patched sqlnet.ora DIRECTORY → {wallet_str}")
 
     print(f"[wallet] Extracted ATP wallet to {wallet_dir}")
 

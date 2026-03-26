@@ -70,12 +70,16 @@ class DatabaseConnection:
             if self._pool:
                 conn = self._pool.acquire()
             else:
-                # Fallback to direct connection if pool not initialized
+                # Fallback to direct connection if pool not initialized.
+                # wallet_location is required by oracledb thin mode for mTLS;
+                # config_dir handles tnsnames.ora / sqlnet.ora resolution.
                 conn = oracledb.connect(
                     user=self.username,
                     password=self.password,
                     dsn=self.dsn,
-                    config_dir=self.config_dir
+                    config_dir=self.config_dir,
+                    wallet_location=self.wallet_location,
+                    wallet_password=self.password,
                 )
 
             yield conn
