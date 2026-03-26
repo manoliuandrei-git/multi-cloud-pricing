@@ -264,6 +264,60 @@ def health():
     return {"status": "ok", "version": "2.0.0"}
 
 
+@app.get("/api/debug")
+def debug():
+    """
+    Diagnostic endpoint — reports wallet state, DB connectivity, and row counts.
+    Remove or protect this endpoint before going to production.
+    """
+    import os
+    from database.connection import db
+
+    result: dict = {}
+
+    # 1. Wallet / env-var state
+    result["wallet_dir"] = os.environ.get("ATP_WALLET_DIR", "NOT SET")
+    result["wallet_dir_exists"] = os.path.isdir(result["wallet_dir"]) if result["wallet_dir"] != "NOT SET" else False
+    result["atp_service"] = config.ATP_SERVICE or "NOT SET"
+    result["atp_username"] = config.ATP_USERNAME or "NOT SET"
+    result["atp_password_set"] = bool(config.ATP_PASSWORD)
+    result["anthropic_key_set"] = bool(config.ANTHROPIC_API_KEY)
+
+    # List wallet files so we can verify what was extracted
+    if result["wallet_dir_exists"]:
+        try:
+            result["wallet_files"] = os.listdir(result["wallet_dir"])
+        except Exception as e:
+            result["wallet_files"] = f"ERROR: {e}"
+
+    # 2. DB connection test
+    try:
+        ok = db.test_connection()
+        result["db_connection"] = "OK" if ok else "FAILED"
+    except Exception as e:
+        result["db_connection"] = f"EXCEPTION: {e}"
+
+    # 3. Row counts per category (only if connected)
+    if result["db_connection"] == "OK":
+        try:
+            rows = db.execute_query(
+                "SELECT service_category, COUNT(*) FROM pricing_cache GROUP BY service_category"
+            )
+            result["pricing_cache_counts"] = {r[0]: r[1] for r in rows}
+        except Exception as e:
+            result["pricing_cache_counts"] = f"ERROR: {e}"
+
+        try:
+            rows = db.execute_query(
+                "SELECT DISTINCT service_category FROM pricing_cache"
+            )
+            result["distinct_categories"] = [r[0] for r in rows]
+        except Exception as e:
+            result["distinct_categories"] = f"ERROR: {e}"
+
+    return result
+
+
 @app.get("/api/config")
 def get_config():
     """Return frontend-relevant config values (no secrets)"""
