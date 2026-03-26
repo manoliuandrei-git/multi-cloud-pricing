@@ -38,3 +38,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# OCI VM utility scripts (local use only)
+check_vm.sh
+fix_vm.sh
